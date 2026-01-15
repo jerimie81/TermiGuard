@@ -1,0 +1,45 @@
+{
+  "project_meta": {
+    "name": "TermiGuard-A16",
+    "target_device": "Samsung SM-A165M",
+    "os_version": "Android 15 (API 35)",
+    "primary_language": "Kotlin",
+    "architecture": "arm64-v8a"
+  },
+  "repository_structure": {
+    "app/src/main/kotlin": {
+      "vpn": {
+        "TunnelService.kt": "Core VpnService implementation; handles TUN interface creation.",
+        "TunnelConfig.kt": "Manages WireGuard-based routing rules and MTU settings (suggested 1280 for 4G)."
+      },
+      "terminal": {
+        "SshClientManager.kt": "Wrapper for Apache MINA SSHD; handles session keep-alives.",
+        "TerminalFragment.kt": "UI integration of the Termux-view emulator."
+      },
+      "security": {
+        "KeyStoreProvider.kt": "Generates hardware-backed Ed25519 keys for MX Linux authentication."
+      }
+    },
+    "app/src/main/AndroidManifest.xml": {
+      "critical_declarations": [
+        "android.permission.BIND_VPN_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+      ]
+    },
+    "scripts": {
+      "setup_mx_linux.sh": "Script to configure OpenSSH server and VPN endpoint on the MX Linux host."
+    }
+  },
+  "dependency_stack": {
+    "vpn": "com.wireguard.android:tunnel:1.0.20230706",
+    "ssh": "org.apache.sshd:sshd-core:2.12.0",
+    "ui": "com.termux:termux-view:0.118.0"
+  },
+  "deployment_strategy": {
+    "step_1": "Initialize Git repo and add Termux-view as a submodule.",
+    "step_2": "Implement VpnService with 'Always-on' broadcast receiver.",
+    "step_3": "Build SSH client logic with auto-reconnect on network change.",
+    "step_4": "Optimization: Add CPU WakeLocks specifically for the Helio G99 chipset idle states."
+  }
+}

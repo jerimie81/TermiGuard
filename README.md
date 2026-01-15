@@ -59,4 +59,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 *   [WireGuard](https://www.wireguard.com/)
 *   [Apache MINA SSHD](https://mina.apache.org/sshd-project/)
 *   [Termux](https://termux.dev/)
-*   [DontKillMyApp](https://dontkillmyapp.com
+*   [DontKillMyApp](https://dontkillmyapp.com/)

@@ -1,0 +1,12 @@
+The Samsung SM-A165M is a mid-range device with a MediaTek Helio G99 chipset. On Android 15 (One UI 7), the primary challenge is not the network protocols themselves, but maintaining process persistence against Samsung's aggressive memory management.
+1. Persistence Strategy (The "Foreground" Rule)
+Android 15 and Samsung's "Chimera" service will kill background processes if they aren't properly declared.
+Foreground Service Type: You must use type="connectedDevice" or type="specialUse" in your Manifest to justify long-running SSH/VPN sessions.
+Battery Exemptions: Your app must programmatically prompt the user to set the app to "Unrestricted" in Battery settings. Without this, the VPN tunnel will collapse when the device enters "Doze" mode.
+2. VPN Implementation (VpnService)
+Protocol: Use WireGuard (via the wireguard-android library) rather than OpenVPN. It is more battery-efficient for the Helio G99 and handles 4G signal handovers (switching towers) much better.
+Always-On: Implement the VpnService with the SERVICE_INTERFACE intent. The app should guide the user to Settings > Connections > More Connection Settings > VPN to enable the system-level "Always-on" toggle.
+Kill Switch: Use VpnService.Builder.setBlocking(true) to prevent any data from leaking outside the tunnel if the connection drops.
+3. Terminal Implementation (SSH/Telnet)
+Terminal View: Do not reinvent the UI. Use the Termux-view component from the official Termux GitHub. It handles ANSI escape codes and gesture-based scrolling correctly for the A16's 90Hz AMOLED screen.
+Secure Storage: Use the Android Keystore System to generate and store your SSH RSA/Ed25519 keys. The SM-A165M has a hardware-backed TEE (Trusted Execution Environment) that prevents keys from being extracted.

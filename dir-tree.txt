@@ -1,0 +1,27 @@
+
+.
+    597342ec-a381-4d0b-8379-e6754549135f.png
+    README.md
+    Strategic Guide for SM-A165M (Android 15).txt
+    TODO.md
+    concise-project-handover-document.txt
+    dir-tree.txt
+    phase-documentation.md
+    project-blueprint.txt
+    .rsync-tmp/
+    app/
+        src/
+            main/
+                AndroidManifest.xml
+                kotlin/
+                    security/
+                        KeyStoreProvider.kt
+                    terminal/
+                        SshClientManager.kt
+                        TerminalFragment.kt
+                    vpn/
+                        TunnelConfig.kt
+                        TunnelService.kt
+    scripts/
+        setup_mx_linux.sh
+    slides/

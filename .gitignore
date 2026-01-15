@@ -1,0 +1,34 @@
+# Android
+build/
+.gradle/
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# Captures
+captures/
+
+# Google Services
+google-services.json
+
+# Native
+.externalNativeBuild/
+.cxx/
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# Log files
+*.log
+
+# Android Studio
+*.jks
+*.keystore
+*.pk8
+*.pem
+
+# Local configuration
+local.properties

@@ -1,0 +1,293 @@
+TermiGuard‑A16: Phase‑by‑Phase Implementation Guide
+
+This document expands on the project blueprint by providing detailed guidance for each development phase of the
+TermiGuard‑A16 project. The goal is to help developers understand why certain tasks are required and how
+to implement them effectively on a Samsung SM‑A165M running Android 15. Where appropriate, citations from
+official documentation or authoritative sources are included to justify decisions and provide additional context.
+
+Phase 0 – Research & Planning
+
+The project begins with discovery and planning. Before writing any code, ensure that you understand both the
+hardware and the software environment and confirm that the architecture fits the desired requirements.
+
+Understand the device and OS – Read the provided strategic guide for SM‑A165M. It notes that Samsung’s
+One UI 7 aggressively kills background processes and requires VPN/SSH services to run as foreground
+services with the connectedDevice type. Users must also manually set the app to “Unrestricted” in the
+Battery settings; otherwise, the VPN session will collapse when the device enters Doze mode.
+Keep these constraints in mind when designing service lifecycles.
+
+Investigate Always‑on VPN behaviour – Android’s connectivity guide explains that “Always‑on VPN”
+automatically starts a VPN service at boot and can block all traffic that doesn’t use the VPN.
+When this option is enabled, the Settings app warns users that they will lose internet until the tunnel
+connects. Because the system—not your app—controls connection state, you should
+disable UI elements that disconnect the tunnel and persist any configuration across restarts.
+
+Battery‑optimization exemptions – The Doze and App Standby documentation shows that apps may prompt users
+to exempt them from battery optimizations using ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
+Google Play policies only allow this exemption when Doze breaks the core function (such as persistent VPN
+connections). Plan a user flow that requests this exemption and explains why it’s
+necessary.
+
+Evaluate memory architecture (optional) – If your project includes the stateless core and event‑sourced
+memory described in the agent handover notes, research long‑term memory threats such as memory poisoning.
+Security research shows that attackers can plant malicious content in an agent’s memory and hijack its
+long‑term objectives; defending against this requires treating memory as untrusted input and monitoring
+workflows over time. Use this insight when designing your event store and
+projections.
+
+Define scope and milestones – Break down the deliverables into stages (VPN, SSH, terminal UI, key
+management, memory gateway, etc.), decide which features are mandatory for the first release and document
+acceptance criteria. Use the phases in this guide as a template for your own milestone planning.
+
+Phase 1 – Project Setup
+1.1 Initialize the repository
+
+Create the Git repository – Commit the project blueprint, strategic guide and handover notes. Replicate
+the directory structure described in the blueprint (app/src/main/kotlin/vpn, terminal, security,
+etc.) so that later phases can drop their code into the correct modules.
+
+Add project scaffolding – Include a .gitignore appropriate for Android projects (exclude build
+directories, IDE settings and generated files).
+
+1.2 Environment configuration
+
+Install tools – Install Android Studio or your preferred IDE with Android 15 SDK support. Enable
+Kotlin since the primary language for this project is Kotlin.
+
+Connect the device – Test ADB connectivity with the SM‑A165M. Install any required Samsung drivers
+and enable USB debugging on the phone.
+
+Set up Termux‑view – The Termux project publishes several libraries. According to the Termux
+documentation, plugins or third‑party apps that need to display a terminal must import the terminal‑view
+library; the termux‑shared library depends on terminal‑view, but you still need to explicitly import
+terminal‑view to use the terminal component. Add the Jitpack repository to your
+root Gradle file and declare implementation 'com.termux:terminal-view:0.118.0' in your module’s
+dependencies.
+
+1.3 Dependency management
+
+WireGuard tunnel library – The WireGuard project provides an embeddable tunnel library on Maven
+Central. The Android GUI project notes that the library opportunistically uses the kernel implementation
+and falls back to userspace when necessary; you can embed it by declaring
+implementation 'com.wireguard.android:tunnel:$wireguardTunnelVersion'. Because the
+library uses Java 8 features, enable desugaring in your Gradle configuration and set Java 17 compatibility
+(coreLibraryDesugaringEnabled = true and add the desugar_jdk_libs dependency).
+
+SSH client – Add Apache MINA SSHD (org.apache.sshd:sshd-core:2.12.0) to handle SSH connections. It
+provides an extensible client and supports keep‑alive packets and reconnection logic.
+
+Termux libraries – As noted above, import terminal-view and optionally termux-shared if you need
+additional utilities. Use Jitpack’s instructions (Step 1: add repository; Step 2: declare dependency)
+provided in the Termux documentation.
+
+Phase 2 – Core Android Implementation
+2.1 VPN service module
+
+Implement TunnelService.kt – Extend VpnService and create the TUN interface. Use the WireGuard
+tunnel library to configure the interface and handle routing. Set the foregroundServiceType in the
+manifest to connectedDevice (or specialUse) so that Samsung’s memory manager allows long‑running
+services.
+
+Configure MTU and routes – The blueprint suggests an MTU of 1280 for 4G networks. Encapsulate
+these settings in a TunnelConfig class and use the builder pattern to set addresses and routes.
+
+Always‑on support – Provide UI to enable Always‑on VPN. When this option is enabled, Android can
+automatically start your VPN at boot and block connections that do not use the VPN.
+Always save the last known configuration so that the system can restart the service without user input
+. Disable any manual disconnect buttons when Always‑on is active because the
+system controls the connection.
+
+Kill‑switch behaviour – Enable the “Block connections without VPN” toggle in your app by directing
+users to Settings. When this system switch is on, Android blocks any traffic that is not sent through the
+VPN interface. Additionally, call VpnService.Builder.setBlocking(true) when
+establishing the TUN interface to ensure that the file descriptor operates in blocking mode; this helps
+implement your own kill switch in combination with proper routing rules.
+
+Battery exemptions – Integrate an onboarding flow that prompts users to add the app to the battery
+exemption list. Use the intent ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to open the system dialog and
+explain why this is required. Remind users that the VPN may stop if they do
+not grant this exemption on Samsung devices.
+
+2.2 Terminal and SSH module
+
+Create SshClientManager.kt – Wrap Apache MINA SSHD to handle connection management. Implement
+keep‑alive packets and automatic reconnection when network connectivity changes (for example, when the
+device switches cell towers). Provide callback interfaces for UI components to update connection status.
+
+Integrate TerminalFragment.kt – Use the terminal-view library to display a full‑featured terminal
+emulator. According to the Termux documentation, you must explicitly import terminal‑view to use
+Termux’s terminal; this library automatically imports the underlying terminal‑emulator dependency
+. Ensure that the UI supports ANSI escape codes, multi‑touch gestures and 90 Hz
+refresh rates of the SM‑A165M screen.
+
+User interface – Build a fragment or activity that allows users to enter SSH credentials, select a
+profile and start/stop SSH sessions. Provide status indicators and integrate with the key store so that
+private keys can be selected without exposing them.
+
+2.3 Security and key management
+
+Implement KeyStoreProvider.kt – Use Android’s KeyStore and KeyPairGenerator with the
+AndroidKeyStore provider to generate Ed25519 (or RSA) key pairs. The Android Keystore documentation
+explains that keys can be bound to the device’s secure hardware—the Trusted Execution Environment (TEE) or
+Secure Element (SE). When this feature is enabled, the key material is never exposed outside secure
+hardware. Check whether a key is in secure hardware by retrieving a KeyInfo
+and calling getSecurityLevel() or isInsideSecurityHardware() depending on your target SDK.
+
+StrongBox considerations – Some devices include a StrongBox KeyMint, which offers an even higher level
+of isolation. You can request StrongBox backing via KeyGenParameterSpec.Builder.setIsStrongBoxBacked(true);
+however, StrongBox supports only a limited set of algorithms and may be slower.
+Evaluate whether the additional security is necessary for your use case.
+
+Key management flows – On first launch, generate a new key pair and store it in the keystore. Provide
+UI options to import existing keys (public or private), back up public keys and delete keys. Ensure
+private keys never leave secure storage; use the keystore’s APIs to perform signing operations without
+exposing private material.
+
+2.4 Manifest and permissions
+
+Declare VPN service – In AndroidManifest.xml, add a <service> entry for your VPN service with
+android:permission="android.permission.BIND_VPN_SERVICE" and set android:exported="false". Specify
+android:foregroundServiceType="connectedDevice" to justify long‑running connectivity on Samsung
+devices.
+
+Request required permissions – Include android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE (or
+FOREGROUND_SERVICE_SPECIAL_USE on API 34+), and android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS so
+you can prompt the user for battery exemptions. Only request battery‑optimization exemptions if Doze or
+Standby interrupts the core functionality.
+
+Broadcast receivers – Register any receivers (e.g., for network change or boot completed events) as
+non‑exported unless they need to receive broadcasts from other apps. Ensure that Always‑on VPN starts the
+service automatically after boot.
+
+Phase 3 – Memory Architecture & Stateless Core (optional)
+
+This phase applies only if your project scope includes the agent learning and event‑sourced memory described in
+the handover notes. Even if you are not implementing this architecture immediately, reviewing these
+requirements helps future‑proof the design.
+
+Define event taxonomy and schema – Finalize a formal, append‑only event schema. Lock the stateless
+agent contract and non‑negotiables (for example, events must be immutable and idempotent) and decide on
+schema versioning.
+
+Select persistence and transport – Choose a durable event log (for example, Kafka, Pulsar or an
+append‑only database) and define tiers for hot, warm and cold storage. Ensure that events are hashed and
+that integrity can be verified during replay.
+
+Build the memory gateway – Implement an API layer that enforces authentication and authorization,
+preventing agents from writing directly to the event store. Provide endpoints for event ingestion and
+retrieving projections (conversation context, knowledge search results, tool indices, etc.).
+
+Implement read‑side projections – Develop projection consumers that subscribe to the event log and build
+materialized views. Provide full replay capabilities to rebuild state deterministically. Test
+determinism and idempotency thoroughly.
+
+Perform threat modeling – Research demonstrates that memory poisoning attacks embed malicious content in
+an agent’s long‑term memory, silently influencing future actions. To defend
+against this, treat all stored memory as untrusted, implement integrity verification, and monitor
+interactions across sessions.
+
+Refactor agents for statelessness – Remove direct database access from agent code. Use explicit
+request/response schemas and write tests to ensure that the core logic does not depend on hidden state.
+
+Plan migration – If you have an existing monolithic memory, perform a dual‑write migration: write
+events to both the new event store and the legacy database, verify parity, then cut over and decommission
+the old store. Prepare runbooks and operator documentation.
+
+Phase 4 – Scripts and Backend Configuration
+
+Create a script (scripts/setup_mx_linux.sh) to configure an MX Linux host as both a WireGuard endpoint and
+OpenSSH server. The script should:
+
+Install wireguard-tools and openssh-server via the package manager.
+
+Generate server keys for WireGuard and an SSH host key.
+
+Configure the WireGuard interface with the server’s private key, peer public keys and firewall rules.
+
+Enable system services (e.g., enable and start wg-quick and sshd).
+
+Provide usage instructions—how to run the script on a fresh VM and verify connectivity from the app.
+
+Phase 5 – User Interface and Experience
+
+The app must clearly communicate the state of the VPN and SSH sessions and guide users through mandatory
+system settings.
+
+Home screen – Provide buttons to connect/disconnect the VPN and open the terminal. Use persistent
+notifications when the VPN is active, as required for foreground services.
+
+Onboarding screens – Explain why battery optimization must be disabled and how to enable Always‑on
+VPN. Direct users to Settings to toggle “Block connections without VPN”; warn them that enabling this
+option will block all non‑VPN traffic until the tunnel connects.
+
+Settings screens – Allow users to manage VPN profiles (server address, private/public keys), SSH
+hosts (address, username, port) and terminal appearance (font size, colour scheme). Provide an option
+to toggle Always‑on VPN; disable manual disconnect controls while Always‑on is active.
+
+Phase 6 – Testing
+
+Effective testing ensures that your app works reliably on the SM‑A165M and across Android 15 devices.
+
+Unit tests – Validate VPN configuration parsing, SSH connection handling, key generation, and secure
+storage. Mock network conditions to simulate disconnections and reconnections.
+
+Instrumented tests – Run on a physical SM‑A165M or emulator. Verify that the VPN tunnel remains
+active across network changes (switching from Wi‑Fi to cellular), reboots and system updates. Test
+battery‑optimization exemption flows and ensure the app survives Samsung’s aggressive memory management
+by remaining in the foreground.
+
+Doze and App Standby testing – Use ADB commands to force the device into idle mode (adb shell dumpsys deviceidle force-idle) and then exit idle mode (adb shell dumpsys deviceidle unforce) to
+confirm that the app recovers correctly. Also test App Standby by marking the
+app inactive and then active again.
+
+External memory tests (optional) – If implementing the stateless core, test event ingestion under load
+and verify that projections rebuild deterministically. Introduce deliberately malformed events to check
+your system’s resilience against memory poisoning and replay attacks.
+
+Phase 7 – Optimization and Hardening
+
+Performance tuning and security hardening are critical before release.
+
+CPU and battery profiling – Use Android Studio Profiler to monitor CPU usage and battery drain while
+the VPN and SSH sessions are active. Introduce WakeLocks only when necessary; Android’s background
+work guidelines state that wake locks keep the device from suspending but can quickly drain the battery,
+so you should release them as soon as possible. Consider chipset‑specific
+optimizations for the Helio G99, such as acquiring partial wake locks only during reconnection logic.
+
+Security audit – Verify that the WireGuard implementation uses recommended cryptographic parameters.
+Keep dependencies updated to the latest versions. Audit the SSH client configuration to ensure strong
+cipher suites and disable obsolete algorithms.
+
+User education – Include guidance on Samsung’s battery management quirks, such as disabling Adaptive
+Battery and “Put unused apps to sleep,” in your onboarding flow.
+
+Phase 8 – Documentation and Readiness
+
+Developer documentation – Produce diagrams of your architecture (including the VPN flow, SSH client
+interactions and memory gateway if applicable) and document public APIs. Comment your code thoroughly
+and provide examples for setting up the Linux endpoint.
+
+README – Summarize the project’s purpose, feature set, installation steps, usage instructions and
+contribution guidelines. Mention key dependencies and any special configuration (e.g., enabling
+desugaring, battery exemptions).
+
+User help – Create an in‑app help section or user manual that explains how to connect to the VPN,
+configure SSH, import keys and troubleshoot common issues.
+
+Phase 9 – Release and Maintenance
+
+Build and signing – Create a signed release APK or App Bundle. Test on additional devices and across
+different Android versions to ensure compatibility.
+
+Distribution – Publish the app to your chosen distribution channel (internal store, F‑Droid, Play
+Store). Follow the respective guidelines for content policies, privacy disclosures and accessibility.
+
+CI/CD – Set up continuous integration to run tests, perform static analysis and build artifacts on
+each commit. Automate dependency updates and security scanning.
+
+Monitoring and feedback – Use crash reporting tools and battery statistics to monitor real‑world
+performance. Gather user feedback and issue fixes and enhancements regularly.
+
+By following this phase‑by‑phase guide, your team can systematically build, harden and deliver
+TermiGuard‑A16 while adhering to Android best practices and addressing device‑specific challenges on the
+Samsung SM‑A165M.

@@ -1,0 +1,109 @@
+Title:  TermiGuard_High-Persistence
+
+1 -----------------------------------
+
+TermiGuard-A16: Android 15 High-Persistence
+Specification
+This document provides the exhaustive technical blueprint for TermiGuard-A16, a
+specialized networking and terminal utility designed for Android 15 (API 35). While
+originally conceptualized for the Samsung SM-A165M, this specification outlines a
+device-agnostic architecture that ensures persistence, security, and
+performance across all Android 15 hardware.
+1. Project Vision & Core Constraints
+The primary challenge of modern mobile development is the conflict between user
+privacy/battery life and background utility. TermiGuard-A16 resolves this by
+leveraging system-level hooks that Android 15 provides for "critical" utilities.
+1.1 Technical Targets
+OS Target: Android 15 (API 35)
+Architecture: arm64-v8a (64-bit only support)
+Binary Alignment: 16 KB page-aligned (Mandatory for Android 15)
+Primary Subsystems:
+WireGuard VPN: Low-latency, battery-efficient encrypted tunneling.
+SSH Terminal: Persistent remote shell via Apache MINA SSHD.
+Hardware Keystore: TEE-backed Ed25519/AES key management.
+2. Phase-by-Phase implementation
+Phase 1: Toolchain & 16 KB Alignment
+Android 15 introduces a requirement for 16 KB memory page alignment to improve
+performance on 64-bit devices.
+Task: Configure the NDK and Gradle to ensure all .so (shared libraries) are
+aligned.
+
+2 -----------------------------------
+
+Linker Flags: -Wl,-z,max-page-size=16384 must be passed to the LLVM
+linker.
+Validation: Use zipalign -c -P 16 to verify APK compliance.
+Phase 2: The Persistence Engine (Foreground Services)
+To survive "Chimera" (Samsung) or standard Android background restrictions, we
+implement a multi-priority service model.
+Service Type: FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE .
+Logic: The VPN tunnel and SSH session share a high-priority notification.
+Exemption: Programmatic request for
+ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS .
+Phase 3: Cryptographic Foundation (Android Keystore)
+Security is anchored in the device's Trusted Execution Environment (TEE).
+Key Type: Ed25519 for SSH; Curve25519 for WireGuard.
+Storage: Keys are generated with setUserAuthenticationRequired(false)
+for background use but setInvalidatedByBiometricEnrollment(true) for
+security.
+Workaround: For Ed25519 library discrepancies (Conscrypt), implement a
+"Symmetric Wrapper" where a hardware-backed AES key encrypts the
+protocol-specific private key.
+Phase 4: Networking (WireGuard & SSH)
+VPN: Integration of com.wireguard.android:tunnel . Implementation of a
+persistent VpnService with an MTU of 1280 to prevent fragmentation on
+4G/LTE/5G networks.
+SSH: Integration of Apache MINA SSHD with custom KeepAlive packets
+( SSH_MSG_IGNORE ) every 45 seconds to keep carrier NAT tables open.
+3. Device-Agnostic Architecture Diagram
+
+3 -----------------------------------
+
+graph TD
+A[User Interface - Jetpack Compose] --> B[TerminalFragment - Termux
+A --> C[VPN Dashboard]
+subgraph Core Logic
+D[SshClientManager] --> E[Apache MINA SSHD]
+F[TunnelService] --> G[WireGuard-go Engine]
+end
+subgraph Hardware Abstraction Layer
+H[Android Keystore] --> I[TEE / StrongBox]
+J[PowerManager] --> K[WakeLocks / Battery Exemptions]
+end
+E --> L((Remote Server))
+G --> L
+4. Android 15 Specific Configurations
+4.1 Manifest Declarations
+The following permissions are non-negotiable for persistence:
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" /
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CO
+<uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTER
+<uses-permission android:name="android.permission.INTERNET" />
+4.2 Foreground Service Declaration
+<service
+android:name=".vpn.TunnelService"
+android:foregroundServiceType="connectedDevice"
+android:permission="android.permission.BIND_VPN_SERVICE"
+android:exported="false">
+</service>
+
+4 -----------------------------------
+
+5. Deployment & Maintenance (Phase 8/9)
+5.1 Server-Side Setup
+A remote gateway must be prepared using the setup_mx_linux.sh script, which:
+1. Installs wireguard-tools .
+2. Configures sshd to accept only Ed25519 keys.
+3. Sets up NAT forwarding for the VPN clients.
+5.2 Performance Hardening
+Helio G99 Optimization: Utilize PARTIAL_WAKE_LOCK only during active SSH
+data transfer to preserve the 6nm efficiency of the chipset.
+Memory Pressure: The app must implement onTrimMemory() to release UI
+resources while maintaining the background network state.
+6. Conclusion
+By following this multi-phase specification, TermiGuard-A16 will provide a robust,
+hardware-secured environment that survives the aggressive power-saving
+measures of Android 15. The combination of 16 KB alignment, TEE-backed
+cryptography, and the connectedDevice service type ensures that professional
+

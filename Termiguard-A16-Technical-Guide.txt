@@ -1,0 +1,325 @@
+Engineering a High-Persistence Networking and Cryptographic Framework for Android 15: The TermiGuard-A16 Technical Guide
+The evolution of the Android operating system has reached a pivotal juncture with the release of Android 15 (API 35), introducing a paradigm shift in how background processes, cryptographic operations, and hardware abstraction are managed. The TermiGuard-A16 project represents a comprehensive architectural response to these changes, specifically targeting the complexities of maintaining high-integrity VPN tunnels and persistent SSH terminal sessions on modern hardware such as the Samsung SM-A165M. This technical guide provides an exhaustive analysis of the project's phases, focusing on universal background persistence, standard Keystore implementation, and cross-device hardware compatibility within the context of the arm64-v8a architecture and the MediaTek Helio G99 chipset.   
+
+Phase 0: Conceptual Research and Behavioral Analysis of Android 15
+The foundational phase of TermiGuard-A16 involves a deep investigation into the behavioral changes introduced in API 35. Unlike previous versions, Android 15 enforces a more rigid lifecycle for background services, specifically through the introduction of strict timeouts for certain foreground service types and enhanced restrictions on background starts. For an application designed to provide secure, persistent networking, understanding these limitations is not merely a compliance task but a core functional requirement.   
+
+One of the most significant changes in Android 15 is the cumulative 6-hour timeout for data synchronization foreground services. The system calculates the total time all services of the dataSync type run within a 24-hour window. If this limit is exceeded, the system triggers a timeout mechanism, requiring the app to stop the service gracefully or face a system-level exception. For TermiGuard-A16, which requires long-running network tunnels, this necessitates a shift away from dataSync towards more robust foreground service types like connectedDevice or specialUse.   
+
+The "connectedDevice" foreground service type is specifically designed for apps that maintain an active connection with an external network or hardware device, making it the ideal candidate for a VPN or SSH terminal. However, this type requires its own set of manifest-level permissions, such as FOREGROUND_SERVICE_CONNECTED_DEVICE, and may have runtime prerequisites depending on the specific connection protocol used. The research phase concluded that a dual-service approach—leveraging the Android VpnService for the tunnel and a standard Service with a connectedDevice type for the terminal—provides the highest probability of survival across diverse OEM power management implementations.   
+
+Comparative Analysis of Foreground Service Types and Timeouts
+The following table delineates the various foreground service types available in Android 15 and their associated runtime constraints, which influenced the selection of the "connectedDevice" type for TermiGuard-A16's core networking components.
+
+Foreground Service Type	Manifest Permission	Timeout Behavior (Android 15)	Primary Use Case
+connectedDevice	FOREGROUND_SERVICE_CONNECTED_DEVICE	None (Indefinite if active)	External hardware, network connections
+dataSync	FOREGROUND_SERVICE_DATA_SYNC	6 hours per 24-hour period	Cloud backup, file transfers
+mediaProcessing	FOREGROUND_SERVICE_MEDIA_PROCESSING	6 hours per 24-hour period	Video transcoding, media conversions
+location	FOREGROUND_SERVICE_LOCATION	None (Indefinite if active)	Navigation, GPS tracking
+specialUse	FOREGROUND_SERVICE_SPECIAL_USE	None (Requires explanation)	Custom OEM-specific behaviors
+Beyond service types, Android 15 limits the ability of BOOT_COMPLETED broadcast receivers to launch certain foreground services, including dataSync and mediaPlayback. This implies that for a VPN to be "Always-on" from boot, it must rely on the specialized system-level hooks provided by the VpnService architecture rather than traditional broadcast-based autostart mechanisms.   
+
+Phase 1: Environment Configuration and Toolchain Modernization
+The second phase involves the setup of a modern development environment capable of producing 16 KB page-aligned binaries, a new requirement for Android 15 targeting 64-bit devices. Historically, Android utilized 4 KB memory pages, which dictated the alignment of ELF segments in shared libraries (.so files). Beginning November 1, 2025, Google Play will require all app updates targeting Android 15 to support 16 KB pages, which offers significant performance benefits, including faster app startup times and reduced power draw.   
+
+For TermiGuard-A16, which integrates the WireGuard native library and the Termux-view component, 16 KB alignment is critical. Failure to align these native binaries results in the dynamic linker aborting the app's execution on 16 KB-capable hardware or emulators. The configuration of the toolchain requires upgrading the Android Gradle Plugin (AGP) to version 8.5.1 or higher and the NDK to version r28 or later.   
+
+Optimization of Native Library Compilation
+The Helio G99 chipset, an arm64-v8a architecture, benefits significantly from 16 KB paging through reduced Page Table size and fewer TLB misses. To achieve this alignment, the project modifies the Application.mk and Android.mk files or the CMake configuration to include specific linker flags. The flag -Wl,-z,max-page-size=16384 ensures that the shared libraries are compiled with the necessary segment alignment. Furthermore, the build.gradle file must disable legacy packaging to ensure that libraries are not compressed within the APK, allowing them to be memory-mapped directly on the device.   
+
+The mathematical implication of 16 KB alignment is a slight increase in binary size, as segments must be padded to the larger page boundary. However, the performance gains are non-negligible. Google's internal testing shows up to a 30% improvement in app launch times and a 4.56% reduction in power draw. For a background-heavy application like TermiGuard-A16, these efficiency gains directly translate to longer battery life on devices like the SM-A165M.   
+
+Phase 2: Implementation of the WireGuard-Based VPN Subsystem
+The VPN subsystem is the primary conduit for secure data transmission in TermiGuard-A16. The implementation leverages the com.wireguard.android:tunnel library, specifically version 1.0.20250531 or later, which includes the necessary updates for 16 KB page alignment. The core of the VPN is the TunnelService.kt, which extends Android's VpnService.   
+
+The implementation process follows a strict sequence of system calls to ensure that the tunnel is correctly established and protected from circular routing.   
+
+The app calls VpnService.prepare(Context), which may return an Intent to prompt the user for VPN permission.
+
+Upon receiving permission, the app initiates the VpnService.protect(Socket) call to ensure that the tunnel's own control traffic remains outside the encrypted envelope.
+
+The VpnService.Builder is used to configure the local TUN interface, specifying the IP addresses, DNS servers, and routing rules (routes) provided by the WireGuard configuration.   
+
+The call to Builder.establish() returns a ParcelFileDescriptor, which represents the interface through which IP packets will be read and written by the WireGuard-go engine.   
+
+Network Stability and MTU Optimization
+A critical technical detail in the VPN phase is the optimization of the Maximum Transmission Unit (MTU). For cellular networks like 4G/LTE, a default MTU of 1500 bytes often leads to fragmentation when WireGuard's 80-byte header is added. TermiGuard-A16 utilizes a suggested MTU of 1280 bytes in TunnelConfig.kt to ensure that packets can traverse various carrier networks without fragmentation, which is particularly important for the MediaTek Helio G99's modem handling.   
+
+The GoBackend implementation in the WireGuard library provides a specialized AlwaysOnCallback. This is essential for maintaining the tunnel after a device reboot or during network transitions. When the system starts the VPN in "Always-on" mode, the app must be prepared to reconstruct the tunnel state without user intervention, relying on stored profiles in the secure Keystore.   
+
+Phase 3: The SSH Terminal and Apache MINA SSHD Integration
+The second functional pillar of TermiGuard-A16 is the SSH terminal, which provides a secure shell interface to remote Linux servers, such as those running MX Linux. The project utilizes the Apache MINA SSHD library (version 2.12.0), a pure Java implementation that provides granular control over SSH sessions and authentication.   
+
+The SshClientManager.kt component serves as a wrapper for the SshClient class. To ensure background persistence, the manager implements sophisticated heartbeat logic. This is vital because many firewalls and network routers aggressively terminate idle TCP connections. By sending SSH_MSG_IGNORE packets or keepalive@openssh.com global requests at regular intervals (e.g., every 60 seconds), the app ensures that the network path remains open even during periods of user inactivity.   
+
+Terminal UI and Rendering Performance
+For the terminal interface, TermiGuard-A16 integrates the Termux-view component. This component is optimized for the high refresh rate of the SM-A165M's 90 Hz AMOLED screen, ensuring smooth scrolling and low-latency input. The integration is handled in TerminalFragment.kt, where the view is connected to the I/O streams of the ClientSession provided by Apache MINA SSHD.   
+
+To handle the "Broken Pipe" or "Connection Reset" errors common in mobile environments, the SshClientManager includes an automatic reconnection logic. This logic monitors the IoSession state and attempts to re-establish the connection when the network transitions from Wi-Fi to cellular, using the same hardware-backed credentials stored in the Keystore.   
+
+Phase 4: Security Architecture and Hardware-Backed Cryptography
+Security in TermiGuard-A16 is enforced through the Android Keystore system, which ensures that cryptographic keys remain non-exportable and protected within the device's Trusted Execution Environment (TEE) or StrongBox. The KeyStoreProvider.kt component is responsible for generating and managing the Ed25519 (or RSA) keys used for both WireGuard and SSH authentication.   
+
+For devices like the SM-A165M, which feature a hardware-backed TEE, the app requests the TRUSTED_ENVIRONMENT security level during key generation. This ensures that even if the Android OS is compromised, the attacker cannot extract the private key material from the secure hardware.   
+
+Navigating the Ed25519 Conscrypt Discrepancy
+A known technical hurdle in Android 15 is the intermittent support for Ed25519 certificates in the Conscrypt library, which can lead to NoSuchAlgorithmException when verifying certificate chains. While the Android Keystore natively supports Ed25519 for signing and verification as of Android 13, the TLS stack in Conscrypt sometimes lacks the necessary parsing logic for EdDSA certificates.   
+
+TermiGuard-A16 addresses this by using a "Symmetric Wrapper" strategy for certain cross-device compatibility scenarios. When a direct Ed25519 Keystore entry is not viable due to local library limitations, the app generates a hardware-backed AES-256 master key. This master key is then used to encrypt a software-generated Ed25519 key, which is stored in the app's local encrypted storage. This provides a hardware-anchored security model while maintaining protocol flexibility across different versions of the Android platform.   
+
+Key Attestation and Verification
+To ensure the integrity of the key generation process, TermiGuard-A16 implements hardware key attestation. By retrieving the certificate chain via KeyStore.getCertificateChain(alias), the app can verify that the key was generated in a secure environment and has the intended properties (e.g., non-exportability). This verification process is ideally performed on a trusted external server to prevent local tamper-based bypasses.   
+
+Cryptographic Operation	Algorithm	Security Level	Purpose
+VPN Transport	WireGuard / Curve25519	Hardware (TEE)	Packet encryption and peer auth
+SSH Authentication	Ed25519	Hardware (TEE)	Server login and session auth
+Config Storage	AES-256 (GCM)	Hardware (TEE)	Encrypting VPN/SSH profiles
+Key Exchange	ECDH (P-256/X25519)	Hardware (TEE)	Establishing secure session keys
+Phase 5: Universal Background Persistence and OEM Optimization
+Maintaining persistence in a background networking app is a significant challenge due to the aggressive power management policies of modern OEMs. Samsung's "Chimera" service, Xiaomi's "Battery Saver," and Oppo's "Deep Optimization" are all designed to kill background processes to conserve energy. TermiGuard-A16 overcomes these barriers through a multi-faceted approach.   
+
+Programmatic Battery Optimization Exemption
+The first step in ensuring persistence is requesting the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission. The app programmatically checks if it is on the system's "Not Optimized" list and, if not, launches the ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS intent to guide the user to grant this exemption. This is critical to prevent the app from being placed in the "Restricted" or "Rare" standby buckets, which would severely throttle network and CPU access.   
+
+Foreground Service Maintenance and WakeLocks
+As established in the research phase, the app uses a foreground service with a persistent notification. This ensures the user is aware of the active tunnel and signals to the Android system that the process is of high priority. To further prevent the Helio G99 chipset from entering deep sleep states that might drop the network connection, the app utilizes CPU WakeLocks. By acquiring a PARTIAL_WAKE_LOCK via the PowerManager, the app ensures that the CPU remains active just enough to process incoming packets and maintain the SSH session.   
+
+OEM-Specific Pathing for Persistence Settings
+Because OEM settings vary significantly, TermiGuard-A16 includes an onboarding flow that provides device-specific instructions for users. This "Strategic Guide" approach ensures that users can manually toggle the necessary settings to guarantee persistence.   
+
+OEM	Persistence Settings Path	Required Action
+Samsung	Settings > Apps > [App] > Battery	Set to "Unrestricted"
+Samsung	Device Care > Battery > Automation	Disable "Auto-optimize daily"
+Xiaomi	Settings > Apps > Manage Apps > [App]	Set Battery Saver to "No restrictions"
+Oppo	Battery > More battery settings	Disable "Optimize battery usage"
+Pixel	Settings > Apps > [App] > Battery	Set to "Unrestricted"
+OnePlus	Settings > Battery > Battery Optimization	Set to "Don't optimize"
+Phase 6: Optional Event-Sourced Memory Architecture
+For advanced deployments, TermiGuard-A16 supports an optional stateless agent core with an externalized, event-sourced memory service. This architecture is particularly relevant for applications that require long-term context retention or complex decision-making without the overhead of a heavy local database.   
+
+The event-sourcing pattern defines the state of the system as an append-only log of immutable events. When the agent needs to recover its state—for instance, after being killed and restarted by the system—it replays the event log to rebuild its internal model. This approach aligns perfectly with the stateless nature of modern serverless and agentic AI infrastructures, such as Amazon Bedrock AgentCore.   
+
+Implementing the Memory Gateway
+The memory gateway acts as the centralized repository for these events. The Android app communicates with the gateway via a secure REST or WebSocket API, sending "Conversational" or "State" events whenever an action occurs. The gateway provides several strategies for memory retention:   
+
+Semantic Strategy: Extracts factual insights and knowledge from interactions for future reference.   
+
+Summary Strategy: Maintains a running summary of the session to provide context for long conversations.   
+
+Preference Strategy: Learns and stores user choices and interaction styles over time.   
+
+The mathematical advantage of this system lies in its auditability and scalability. By decoupling the memory from the execution environment, the TermiGuard-A16 client remains lightweight, while the complexity is handled by the high-performance memory service.   
+
+Phase 7: Server-Side Configuration and MX Linux Deployment
+The deployment of TermiGuard-A16 is incomplete without a properly configured remote host. The project includes a dedicated script, setup_mx_linux.sh, designed to transform a fresh MX Linux server into a secure VPN endpoint and SSH gateway.   
+
+The script automates the installation of wireguard-tools and openssh-server. It generates the server's public and private keys and sets up the /etc/wireguard/wg0.conf file. A critical step in the server setup is the configuration of the firewall (e.g., via ufw or nftables) to allow incoming UDP traffic on port 51820 for WireGuard and TCP traffic on port 22 for SSH.   
+
+Security Hardening for the Linux Gateway
+The server-side configuration also includes security hardening measures, such as:
+
+Disabling password-based authentication in /etc/ssh/sshd_config to force the use of the Keystore-backed Ed25519 keys.   
+
+Enabling ClientAliveInterval and ClientAliveCountMax to match the heartbeat settings of the Android client, ensuring that stale sessions are cleaned up while valid ones remain open.   
+
+Configuring IP forwarding and NAT (Network Address Translation) to allow VPN clients to access the broader internet through the server's network interface.   
+
+Phase 8: Verification, Testing, and Performance Hardening
+The final phase of the TermiGuard-A16 project is dedicated to rigorous verification and testing, specifically focused on the unique constraints of Android 15 and the MediaTek Helio G99 chipset.   
+
+16 KB Alignment and APK Analysis
+Verification of 16 KB alignment is performed using the zipalign tool and the check_elf_alignment.sh script.   
+
+zipalign -c -P 16 -v 4 app-release.apk confirms that all uncompressed native libraries within the APK are aligned on 16 KB boundaries.
+
+The llvm-objdump -p command is used on the individual .so files to verify that the LOAD segments have an alignment of 2**14 (16,384 bytes).   
+
+Persistence Testing on the SM-A165M
+The app's persistence is tested by simulating various system conditions:
+
+Doze Mode Simulation: Using ADB commands (adb shell dumpsys deviceidle force-idle), the app's survival is tested when the device enters deep sleep.   
+
+Network Handover: The stability of the VPN tunnel and SSH session is verified while transitioning between Wi-Fi and 4G/LTE. The project expects the WireGuard tunnel to remain active without re-handshaking, while the SSH manager should automatically reconnect if the TCP session is severed.   
+
+Memory Pressure: The app is tested alongside memory-intensive processes to ensure that the "connectedDevice" foreground service priority prevents it from being terminated by the Android Low Memory Killer (LMK) or Samsung's Chimera service.   
+
+Resource Profiling and Helio G99 Optimization
+Performance profiling is conducted using Android Studio's Profiler to monitor CPU usage and battery drain. A primary goal is to ensure that the CPU WakeLocks do not result in excessive power consumption. The project targets a power draw of less than 5% per hour during active VPN/SSH usage, a benchmark supported by the inherent efficiency of the WireGuard protocol and the Helio G99's 6nm manufacturing process.   
+
+Synthesis of Architectural Insights and Conclusions
+The technical guide for TermiGuard-A16 on Android 15 reveals a complex interplay between OS-level restrictions and hardware-backed solutions. The project successfully navigates the transition to API 35 by adopting a "Persistence First" philosophy, prioritizing foreground service type selection and battery optimization exemptions.
+
+The requirement for 16 KB page alignment, while initially a technical hurdle, provides long-term benefits in terms of memory efficiency and system performance. By modernizing the toolchain and enforcing strict ELF alignment, the app ensures compatibility with future 64-bit hardware while maintaining a stable footprint on current devices like the Samsung SM-A165M.
+
+Security remains the anchor of the application, with the hardware-backed Keystore providing a non-extractable foundation for cryptographic identities. Despite the challenges posed by library-level discrepancies in Ed25519 support, the project's use of symmetric wrappers and raw key signing provides a resilient security model that is both standard-compliant and cross-device compatible.
+
+Ultimately, TermiGuard-A16 demonstrates that with a deep understanding of the Android system's internal mechanisms—from the dynamic linker's alignment rules to the PowerManager's standby buckets—it is possible to build high-persistence, high-security networking tools that empower professional users to manage their infrastructure from any location, regardless of the aggressive constraints of modern mobile platforms.
+
+
+
+project-blueprint.txt
+
+
+Strategic Guide for SM-A165M (Android 15).txt
+
+developer.android.com
+Changes to foreground services | Background work - Android Developers
+
+
+developer.android.com
+Behavior changes: Apps targeting Android 15 or higher
+
+
+developer.android.com
+Foreground service types | Background work | Android Developers
+
+
+developer.android.com
+Foreground service types | Background work - Android Developers
+
+
+developer.android.com
+Foreground service types are required - Android Developers
+
+
+learn.microsoft.com
+VpnService.ServiceMetaDataSupportsAlwaysOn Field (Android.Net) - Microsoft Learn
+
+
+developer.android.com
+VPN | Connectivity - Android Developers
+
+
+developer.android.com
+Support 16 KB page sizes | Compatibility | Android Developers
+
+
+android-developers.googleblog.com
+
+
+proandroiddev.com
+My Android App Didn't Meet the 16KB Requirement — Here's How I Fixed It | ProAndroidDev
+
+
+medium.com
+Solving Android 15's 16KB Page Alignment Challenge: A Real-World Case Study with Sentra PTT | by Abdullah Al Masud | Medium
+
+
+stackoverflow.com
+"Your app must support 16 KB memory page sizes by November 1, 2025". How can I fix this issue in my app? I have React Native version 0.72.1 - Stack Overflow
+
+
+github.com
+[Android] App must support 16 KB memory page sizes · Issue #48949 · brave/brave-browser
+
+
+git.zx2c4.com
+wireguard-android - Android GUI for WireGuard
+
+
+javadoc.io
+GoBackend - tunnel 1.0.20230706 javadoc
+
+
+mina.apache.org
+SSHD Overview - Apache MINA
+
+
+github.com
+mina-sshd/docs/client-setup.md at master - GitHub
+
+
+youtube.com
+How to keep your SSH sessions alive - YouTube
+
+
+mina.apache.org
+Chapter 4 - Session - Apache MINA
+
+
+stackoverflow.com
+Dead sessions in apache mina - java - Stack Overflow
+
+
+developer.android.com
+Android Keystore system | Security - Android Developers
+
+
+source.android.com
+Hardware-backed Keystore | Android Open Source Project
+
+
+issuetracker.google.com
+ed25519 signature algoritjm not supported for android 15 casuing cts test "testCurve25519Attestation" failure [399856239] - Issue Tracker
+
+
+blog.yashgoyal.dev
+Secure edDSA Key Management on iOS & Android | by Yash Goyal | Medium
+
+
+stackoverflow.com
+Storing Ed25519 Private key on Android - Stack Overflow
+
+
+developer.android.com
+Verify hardware-backed key pairs with key attestation | Security - Android Developers
+
+
+forum.avicennaresearch.com
+Android Battery Optimization Workarounds - Reference - Avicenna Forum
+
+
+blog.founders.illinois.edu
+android disable battery optimization programmatically A Deep Dive - illinois.edu
+
+
+blog.founders.illinois.edu
+Android Background Process Limit A Deep Dive into Androids Inner Workings. - illinois.edu
+
+
+developer.android.com
+Power management resource limits | App quality - Android Developers
+
+
+softices.com
+Android Foreground Services: Types, Permissions and Limitations - Softices
+
+
+support.google.com
+Understanding foreground service and full-screen intent requirements - Play Console Help
+
+
+stackoverflow.com
+My app bundle in Android Studio 2025.1.2 supports a 16 KB page size, but Google Play still reports that it doesn't - Stack Overflow
+
+
+
+README.md.txt
+
+learn.microsoft.com
+Event Sourcing pattern - Azure Architecture Center | Microsoft Learn
+
+
+bugfree.ai
+Designing for Statelessness in Event-Driven Systems - bugfree.ai
+
+
+aws.amazon.com
+Amazon Bedrock AgentCore Memory: Building context-aware agents | Artificial Intelligence
+
+
+docs.aws.amazon.com
+Event-driven architecture: The backbone of serverless AI - AWS Prescriptive Guidance
+
+
+dev.to
+AI Agent Memory Management System Architecture Design: Evolution from Stateless to Intelligent - DEV Community
+
+
+github.com
+SSH client disconnects from older OpenSSH servers due to Keepalive · Issue #709 · apache/mina-sshd - GitHub
+
+
+faheem-riaz.medium.com
+Preparing Your Flutter App for Android 15's 16 KB Page Size Requirement - Faheem Riaz
+

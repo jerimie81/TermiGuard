@@ -1,0 +1,1 @@
+TermiGuard-A16: High-persistence WireGuard VPN & SSH terminal for Android 15. Engineered for Samsung SM-A165M to defeat background process killing using connectedDevice services and WakeLocks. Includes hardware-backed Ed25519 security, 1280 MTU cellular stability, and 16 KB page-aligned native binaries. Secure, persistent, and arm64-v8a optimized.
