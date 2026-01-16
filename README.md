@@ -55,6 +55,12 @@ To guarantee 100% session persistence on Samsung devices:
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## 📚 Documentation
+* Core engine overview: `Docs/core_engine.md`
+* Detection logic overview: `Docs/detection_logic.md`
+* Platform support matrix: `Docs/platform_support.md`
+* Documentation index: `Docs/documentation.md`
+
 ## 🙏 Acknowledgements
 *   [WireGuard](https://www.wireguard.com/)
 *   [Apache MINA SSHD](https://mina.apache.org/sshd-project/)
