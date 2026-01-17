@@ -1,0 +1,17 @@
+{
+  "scrcpy_binary": "/usr/bin/scrcpy",
+  "adb_binary": "/usr/bin/adb",
+  "default_args": [],
+  "allowed_binaries": [
+    "/usr/bin/scrcpy",
+    "/usr/bin/adb",
+    "/usr/local/bin/scrcpy"
+  ],
+  "forbidden_patterns": [
+    "adb pull /data/",
+    "adb shell rm",
+    "adb install *.apk",
+    "--record",
+    "monkey"
+  ]
+}
