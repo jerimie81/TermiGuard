@@ -106,7 +106,7 @@ class TunnelService : VpnService(), Tunnel {
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("TermiGuard VPN")
             .setContentText("Status: $status")
-            .setSmallIcon(android.R.drawable.stat_sys_vpn_ic)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()
 

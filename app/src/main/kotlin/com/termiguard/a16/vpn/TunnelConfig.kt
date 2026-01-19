@@ -1,6 +1,7 @@
 package com.termiguard.a16.vpn
 
 import com.wireguard.config.Config
+import com.wireguard.config.InetNetwork
 import com.wireguard.config.Interface
 import com.wireguard.config.Peer
 import java.net.InetAddress
@@ -24,9 +25,9 @@ data class TunnelConfig(
 
     fun toWireGuardConfig(): Config {
         val interfaceBuilder = Interface.Builder()
-            .addAddress(address)
+            .addAddress(InetNetwork.parse(address))
             .parsePrivateKey(privateKey)
-            .addDnsServer(dns)
+            .addDnsServer(InetAddress.getByName(dns))
             .setMtu(mtu)
 
         val configBuilder = Config.Builder()
@@ -36,7 +37,7 @@ data class TunnelConfig(
             val peerBuilder = Peer.Builder()
                 .parsePublicKey(peer.publicKey)
                 .parseEndpoint(peer.endpoint)
-                .addAllowedIp(peer.allowedIps)
+                .addAllowedIp(InetNetwork.parse(peer.allowedIps))
             configBuilder.addPeer(peerBuilder.build())
         }
 

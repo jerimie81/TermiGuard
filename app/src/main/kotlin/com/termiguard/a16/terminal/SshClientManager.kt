@@ -18,7 +18,7 @@ class SshClientManager(private val keyPairProvider: KeyPairProvider) {
 
     fun connect(host: String, port: Int, username: String) {
         client = SshClient.setUpDefaultClient().apply {
-            keyPairProvider = this@SshClientManager.keyPairProvider
+            setKeyPairProvider(this@SshClientManager.keyPairProvider)
             start()
         }
 

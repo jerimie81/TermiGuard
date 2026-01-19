@@ -65,6 +65,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.fragment:fragment-ktx:1.7.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
@@ -77,7 +78,7 @@ dependencies {
     implementation("com.wireguard.android:tunnel:1.0.20230706")
     implementation("org.apache.sshd:sshd-core:2.12.0")
     // Note: terminal-view is the correct library name per Phase-by-Phase guide
-    implementation("com.termux:terminal-view:0.118.0")
+    implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
